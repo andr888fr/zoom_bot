@@ -2,7 +2,7 @@ import os
 import requests
 from flask import Flask, request
 from telegram import Update
-from telegram.Application import Application
+from telegram.ext import Application
 from telegram.ext import MessageHandler, filters, ContextTypes
 from groq import Groq
 
