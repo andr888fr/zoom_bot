@@ -1,7 +1,7 @@
 import os
 import requests
 from flask import Flask, request
-from telegram import Update
+from telegram import Update, Bot
 from telegram.ext import Application, MessageHandler, ContextTypes, filters
 from groq import Groq
 import asyncio
@@ -19,7 +19,8 @@ MODEL_NAME = "qwen/qwen-2.5-72b-instruct:free"
 groq_client = Groq(api_key=GROQ_API_KEY)
 app = Flask(__name__)
 
-# Создаем приложение Telegram
+# Инициализируем бота напрямую для отправки ответов через requests или через PTB
+bot = Bot(token=TOKEN)
 telegram_app = Application.builder().token(TOKEN).build()
 
 async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -83,31 +84,32 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await message.reply_text(f"❌ Произошла ошибка при обработке: {e}")
 
-# Добавляем обработчик сообщений
 telegram_app.add_handler(MessageHandler(filters.ALL, handle_audio))
+
+# Создаем глобальный event loop для обработки вебхуков без пересоздания
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
+loop.run_until_complete(telegram_app.initialize())
 
 @app.route("/")
 def index():
     return "Bot is running!"
 
-# Главный маршрут, куда Telegram будет слать обновления
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
     if request.method == "POST":
         json_data = request.get_json(force=True)
         update = Update.de_json(json_data, telegram_app.bot)
         
-        # Запускаем асинхронную обработку в цикле событий Flask
-        asyncio.run(telegram_app.process_update(update))
+        # Передаем обновление в уже существующий цикл событий
+        asyncio.run_coroutine_threadsafe(telegram_app.process_update(update), loop)
+        
     return "OK", 200
 
 async def setup_webhook():
-    await telegram_app.initialize()
     if WEBHOOK_URL:
-        # Устанавливаем вебхук в Telegram
         await telegram_app.bot.set_webhook(url=f"{WEBHOOK_URL}/{TOKEN}")
 
 if __name__ == "__main__":
-    # Устанавливаем вебхук при старте
-    asyncio.run(setup_webhook())
+    loop.run_until_complete(setup_webhook())
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
