@@ -1,16 +1,15 @@
 import os
 import requests
-from flask import Flask
+from flask import Flask, request
 from telegram import Update
 from telegram.ext import Application, MessageHandler, ContextTypes, filters
 from groq import Groq
+import asyncio
 
 # Получаем токены из переменных окружения Render
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
-
-# Ссылка на твое будущее приложение в Render (например, https://zoom-bot-xyz.onrender.com)
 WEBHOOK_URL = os.environ.get("RENDER_EXTERNAL_URL")
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -19,11 +18,9 @@ MODEL_NAME = "qwen/qwen-2.5-72b-instruct:free"
 # Инициализация клиентов
 groq_client = Groq(api_key=GROQ_API_KEY)
 app = Flask(__name__)
-telegram_app = None
 
-@app.route("/")
-def index():
-    return "Bot is running!"
+# Создаем приложение Telegram
+telegram_app = Application.builder().token(TOKEN).build()
 
 async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
@@ -86,16 +83,31 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await message.reply_text(f"❌ Произошла ошибка при обработке: {e}")
 
+# Добавляем обработчик сообщений
+telegram_app.add_handler(MessageHandler(filters.ALL, handle_audio))
+
+@app.route("/")
+def index():
+    return "Bot is running!"
+
+# Главный маршрут, куда Telegram будет слать обновления
+@app.route(f"/{TOKEN}", methods=["POST"])
+def webhook():
+    if request.method == "POST":
+        json_data = request.get_json(force=True)
+        update = Update.de_json(json_data, telegram_app.bot)
+        
+        # Запускаем асинхронную обработку в цикле событий Flask
+        asyncio.run(telegram_app.process_update(update))
+    return "OK", 200
+
 async def setup_webhook():
-    global telegram_app
-    telegram_app = Application.builder().token(TOKEN).build()
-    telegram_app.add_handler(MessageHandler(filters.ALL, handle_audio))
     await telegram_app.initialize()
     if WEBHOOK_URL:
+        # Устанавливаем вебхук в Telegram
         await telegram_app.bot.set_webhook(url=f"{WEBHOOK_URL}/{TOKEN}")
-    await telegram_app.start()
 
 if __name__ == "__main__":
-    import asyncio
+    # Устанавливаем вебхук при старте
     asyncio.run(setup_webhook())
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
